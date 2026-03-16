@@ -1,0 +1,61 @@
+{
+  "total_done": 677,
+  "total_generated": 718,
+  "offload_ratio": 0.8189,
+  "latency_all_ms": {
+    "mean": 2027.92,
+    "p50": 1850.0,
+    "p95": 4089.38,
+    "p99": 4896.82,
+    "min": 300.0,
+    "max": 5223.09
+  },
+  "latency_local_ms": {
+    "mean": 961.65,
+    "p50": 1000.0,
+    "p95": 1992.0,
+    "p99": 2634.4,
+    "min": 300.0,
+    "max": 2780.0
+  },
+  "latency_edge_ms": {
+    "mean": null,
+    "p50": null,
+    "p95": null,
+    "p99": null,
+    "min": null,
+    "max": null
+  },
+  "latency_partial_ms": {
+    "mean": 2278.92,
+    "p50": 2130.75,
+    "p95": 4166.02,
+    "p99": 4986.4,
+    "min": 355.71,
+    "max": 5223.09
+  },
+  "by_type": {
+    "Light": {
+      "count": 331,
+      "mean_ms": 1724.95,
+      "p95_ms": 3692.85,
+      "offload_pct": 76.4,
+      "partial_pct": 76.4
+    },
+    "Medium": {
+      "count": 241,
+      "mean_ms": 2141.76,
+      "p95_ms": 3779.24,
+      "offload_pct": 78.8,
+      "partial_pct": 78.8
+    },
+    "Heavy": {
+      "count": 105,
+      "mean_ms": 2721.69,
+      "p95_ms": 4338.39,
+      "offload_pct": 100.0,
+      "partial_pct": 100.0
+    }
+  },
+  "policy": "ThresholdPolicy(thr=2, heavy_off=True, mode=partial_dynamic)"
+}
