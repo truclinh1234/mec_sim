@@ -10,7 +10,8 @@ from env.user_device import UserDevice
 from env.edge_server import EdgeServer
 from env.channel import SharedBandwidthChannel, FixedChannel
 import config as cfg
-
+import pandas as pd
+import os
 
 class MecEnv:
     """
@@ -37,6 +38,27 @@ class MecEnv:
         self.step_count:     int   = 0
         self.finished_tasks: List[Task] = []
         self._pending:       List[Task] = []
+        self.reset()
+        
+        # ── [NEW] NẠP SẴN 4 MA TRẬN NHIỄU (PRELOAD INTERFERENCE MATRICES) ──
+        self.interference_matrices = {}
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        apps = ['lightgbm', 'mapreduce', 'matrix_app', 'video_app']
+        
+        print("Đang nạp ma trận nhiễu từ profile_data...")
+        for app in apps:
+            excel_path = os.path.join(base_dir, 'profile_data', f"{app}_mc.xlsx")
+            if os.path.exists(excel_path):
+                try:
+                    m_matrix = pd.read_excel(excel_path, engine='openpyxl', sheet_name='edm').values
+                    c_matrix = pd.read_excel(excel_path, engine='openpyxl', sheet_name='edc').values
+                    self.interference_matrices[app] = {'m': m_matrix, 'c': c_matrix}
+                    print(f" - Đã nạp ma trận cho: {app}")
+                except Exception as e:
+                    print(f" - Lỗi khi nạp {app}_mc.xlsx: {e}")
+            else:
+                print(f" - Cảnh báo: Không tìm thấy file {app}_mc.xlsx")
+        
         self.reset()
 
     def reset(self):
@@ -196,13 +218,40 @@ class MecEnv:
         rate     = self.channel.compute_rate(task.user_id, edge_id, num_concurrent)
         tx_delay = task.input_bits / rate + cfg.PROPAGATION_DELAY
 
+        # ── [NEW] TÍNH TOÁN ĐỘ TRỄ NHIỄU (LINEAR INTERFERENCE MODEL) ──
+        base_time = task.cycles / edge.cpu_freq  # Thời gian gốc khi chạy 1 mình
+        penalty_time = 0.0                       # Thời gian phạt do chạy nền
+        
+        # Lấy tên app từ task (bạn có thể lưu thuộc tính này lúc parse DAG)
+        app_name = getattr(task, 'app_type', None) 
+        
+        if app_name and app_name in self.interference_matrices:
+            m_matrix = self.interference_matrices[app_name]['m']
+            c_matrix = self.interference_matrices[app_name]['c']
+            
+            # Lấy trung bình hệ số m và c của thiết bị edge_id
+            m_factor = abs(m_matrix[edge_id % len(m_matrix)].mean())
+            c_factor = abs(c_matrix[edge_id % len(c_matrix)].mean())
+            
+            base_time = c_factor
+            penalty_time = m_factor * num_concurrent  # Phương trình tuyến tính m*x + c
+        else:
+            # Fallback: Nếu task không có app_name, dùng hệ số phạt mặc định 50ms
+            penalty_time = 0.05 * num_concurrent 
+            
+        predicted_exec_time = base_time + penalty_time
+        
+        # QUAN TRỌNG: Quy đổi ngược thời gian bị nhiễu thành "Cycles Ảo" để đánh lừa CPU Queue
+        adjusted_cycles = predicted_exec_time * edge.cpu_freq
+        # ──────────────────────────────────────────────────────────────
+
         task.offloaded        = True
         task.split_ratio      = 1.0
         task.edge_id          = edge_id
         task.tx_delay         = tx_delay
         task.channel_rate     = rate
         task.cycles_local     = 0.0
-        task.cycles_edge      = task.cycles
+        task.cycles_edge      = adjusted_cycles  # Sử dụng số Cycles ảo đã tính thêm nhiễu
         user.offloaded_count += 1
         edge.receive_offloaded_task(task, self.sim_time)
 
@@ -237,25 +286,44 @@ class MecEnv:
     def _on_local_part_done(self, task: Task):
         """Gọi khi user CPU xử lý xong local part."""
         task.done_local = True
+        
         if task.is_partial:
-            if task.done_edge:
+            # Xử lý task bị cắt đôi (Partial)
+            if task.done_edge and not task.done:
                 task.done = True
                 self.finished_tasks.append(task)
-        else:
-            task.done = True
-            self.finished_tasks.append(task)
+                if task.job_id == 1:
+                    print(f"[DAG {task.app_type}] Task {task.dag_name} làm xong (Partial) lúc {self.sim_time:.3f}s")
+                    
+        elif not task.offloaded:
+            # [FIX 1] Chỉ đếm nếu đây là task thuần Local
+            if not task.done:
+                # [FIX 2] Bỏ qua các Dummy Node (có cycles = 0) không đi qua Router
+                if task.cycles > 0 or hasattr(task, 'queue_start'):
+                    task.done = True
+                    self.finished_tasks.append(task)
+                    if task.job_id == 1:
+                        print(f"[DAG {task.app_type}] Task {task.dag_name} làm xong (Local) lúc {self.sim_time:.3f}s")
 
     def _on_edge_part_done(self, task: Task):
         """Gọi khi edge CPU xử lý xong edge part."""
-        # finish_time_edge đã được set đúng trong edge_server.py
         task.done_edge = True
+        
         if task.is_partial:
-            if task.done_local:
+            # Xử lý task bị cắt đôi (Partial)
+            if task.done_local and not task.done:
                 task.done = True
                 self.finished_tasks.append(task)
-        else:
-            task.done = True
-            self.finished_tasks.append(task)
+                if task.job_id == 1:
+                    print(f"[DAG {task.app_type}] Task {task.dag_name} làm xong (Partial) lúc {self.sim_time:.3f}s")
+                    
+        elif task.offloaded:
+            # [FIX 3] Chỉ đếm nếu đây là task thuần Edge (Full Offload)
+            if not task.done:
+                task.done = True
+                self.finished_tasks.append(task)
+                if task.job_id == 1:
+                    print(f"[DAG {task.app_type}] Task {task.dag_name} làm xong (Edge) lúc {self.sim_time:.3f}s")
 
     def _stats_by_type(self, tasks):
         result = {}

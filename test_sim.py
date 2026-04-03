@@ -9,6 +9,7 @@ from env.node        import QueueNode
 from env.user_device import UserDevice
 from env.edge_server import EdgeServer
 from env.mec_env     import MecEnv
+from env.dag_job     import DAGJob
 from policy.threshold_policy import ThresholdPolicy
 from metrics.collector       import MetricsCollector
 
@@ -193,7 +194,6 @@ def test_metrics():
     check("summary.json tồn tại",   os.path.exists(sj))
 
     rows = list(csv.DictReader(open(tk)))
-    # Kiểm tra bất biến: latency = tx + wait + proc
     errors = 0
     for r in rows[:50]:
         lat     = float(r["latency_ms"])  if r["latency_ms"]  else None
@@ -206,19 +206,168 @@ def test_metrics():
     check("latency = transit + wait + proc (50 tasks)", errors == 0,
           f"{errors} lỗi", "0")
 
-    # Kiểm tra edge_id ghi đúng
     off_rows = [r for r in rows if r["offloaded"] == "1"]
     bad_eid  = [r for r in off_rows if r["edge_id"] not in ("0","1")]
     check(f"edge_id đúng (0 hoặc 1) cho {len(off_rows)} task offloaded",
           len(bad_eid) == 0)
 
-    # In nhanh summary
     data = json.load(open(sj))
     print(f"\n  total_done={data['total_done']}  offload={data['offload_ratio']*100:.1f}%")
     lat = data['latency_all_ms']
     print(f"  latency mean={lat['mean']}ms  p95={lat['p95']}ms  p99={lat['p99']}ms")
     print(f"  inter_arrival_ms có trong CSV: {'inter_arrival_ms' in rows[0]}")
     print(f"  cycles_local/edge có trong CSV: {'cycles_local' in rows[0]}")
+
+
+# ─── [6] DAGJob ───────────────────────────────────────────────────────────────
+def test_dag_job():
+    print("\n[6] DAGJob: load, stage, dispatch, mark_done, advance")
+
+    # ── 6.1  Load 4 app, kiểm tra DAG hợp lệ ────────────────────────────
+    print("\n  [6.1] Load 4 app_config.json")
+    for path in cfg.DAG_APPS:
+        try:
+            job = DAGJob(job_id=0, config_path=path, arrival_time=0.0, task_id_start=0)
+            check(f"Load OK: {path.split('/')[-2]:12s} "
+                  f"nodes={job.num_tasks}  compute={job.num_compute_tasks}  "
+                  f"stages={job._num_stages}",
+                  job.num_tasks > 0 and job._num_stages > 0)
+        except Exception as e:
+            check(f"Load {path}", False, got=str(e))
+
+    # ── 6.2  Stage structure: lightgbm ───────────────────────────────────
+    print("\n  [6.2] Stage structure — lightgbm")
+    job = DAGJob(0, "profile_data/lightgbm/app_config.json",
+                 arrival_time=0.0, task_id_start=0)
+    print(f"\n{job.stage_summary()}\n")
+
+    # lightgbm: s→0→{1,2}→3→end  =  5 stages
+    check("lightgbm: 5 stages",        job._num_stages == 5,
+          got=job._num_stages, exp=5)
+    check("Stage 0 chứa 's'",          "s"   in job._stages[0])
+    check("Stage 1 chứa '0'",          "0"   in job._stages[1])
+    check("Stage 2 chứa '1' và '2'",   set(job._stages[2]) == {"1","2"})
+    check("Stage 3 chứa '3'",          "3"   in job._stages[3])
+    check("Stage 4 chứa 'end'",        "end" in job._stages[4])
+
+    # ── 6.3  Task type mapping ────────────────────────────────────────────
+    print("\n  [6.3] Task type mapping")
+    #  node '0' : data=10KB  model=0   → total=10  → Light
+    #  node '1' : data=15KB  model=1200 → total=1215 → Heavy
+    #  node '2' : data=15KB  model=600  → total=615  → Medium
+    #  node '3' : data=15KB  model=2200 → total=2215 → Heavy
+    check("node '0' → Light",  job._tasks["0"].task_type == "Light",
+          got=job._tasks["0"].task_type, exp="Light")
+    check("node '1' → Heavy",  job._tasks["1"].task_type == "Heavy",
+          got=job._tasks["1"].task_type, exp="Heavy")
+    check("node '2' → Medium", job._tasks["2"].task_type == "Medium",  # 615KB
+          got=job._tasks["2"].task_type, exp="Medium")
+    check("node '3' → Heavy",  job._tasks["3"].task_type == "Heavy",
+          got=job._tasks["3"].task_type, exp="Heavy")
+    check("node 's'   → Dummy (cycles=0)", job._tasks["s"].cycles == 0)
+    check("node 'end' → Dummy (cycles=0)", job._tasks["end"].cycles == 0)
+
+    # ── 6.4  Task fields: job_id, dag_task_id, arrival_time ──────────────
+    print("\n  [6.4] Task fields")
+    t0 = job._tasks["0"]
+    check("job_id gán đúng",        t0.job_id == 0)
+    check("dag_task_id gán đúng",   t0.dag_task_id == "0")
+    check("arrival_time gán đúng",  t0.arrival_time == 0.0)
+    check("task_id_start=0 → tăng dần",
+          all(job._tasks[nid].task_id >= 0 for nid in job._tasks))
+
+    # ── 6.5  get_ready_tasks: stage 0 toàn dummy → trả stage 1 ngay ─────
+    print("\n  [6.5] get_ready_tasks() lần đầu")
+    ready = job.get_ready_tasks()
+    check("Lần 1: trả 1 task (node '0', bỏ qua 's')",
+          len(ready) == 1, got=len(ready), exp=1)
+    check("Task trả về có dag_task_id='0'",
+          ready[0].dag_task_id == "0")
+    check("current_stage == 1 (đã skip stage 0)",
+          job.current_stage == 1, got=job.current_stage, exp=1)
+
+    # ── 6.6  Không dispatch lại task đã dispatch ─────────────────────────
+    print("\n  [6.6] Không dispatch lại task đã gửi đi")
+    ready2 = job.get_ready_tasks()
+    check("Lần 2: trả [] (đã dispatch hết stage 1)",
+          ready2 == [], got=len(ready2), exp=0)
+
+    # ── 6.7  mark_done bằng task_id (int) ────────────────────────────────
+    print("\n  [6.7] mark_done(task_id: int) → advance stage")
+    task_id_of_0 = job._tasks["0"].task_id
+    job.mark_done(task_id_of_0)       # dùng int task_id
+    check("Sau mark_done('0'): current_stage == 2",
+          job.current_stage == 2, got=job.current_stage, exp=2)
+
+    # ── 6.8  Stage 2: song song node '1' và '2' ──────────────────────────
+    print("\n  [6.8] Stage 2 — song song")
+    ready3 = job.get_ready_tasks()
+    dag_ids = {t.dag_task_id for t in ready3}
+    check("Stage 2 dispatch {'1','2'} cùng lúc",
+          dag_ids == {"1","2"}, got=dag_ids, exp={"1","2"})
+
+    # ── 6.9  mark_done bằng dag_task_id (str) ────────────────────────────
+    print("\n  [6.9] mark_done(dag_task_id: str)")
+    job.mark_done("1")
+    check("Sau mark '1' only: stage vẫn 2 (chờ '2')",
+          job.current_stage == 2, got=job.current_stage, exp=2)
+    job.mark_done("2")
+    check("Sau mark '2': advance sang stage 3",
+          job.current_stage == 3, got=job.current_stage, exp=3)
+
+    # ── 6.10 Stage 3: node '3' phải chờ cả '1' lẫn '2' xong ─────────────
+    print("\n  [6.10] Stage 3 — node '3' chỉ xuất hiện SAU KHI '1' và '2' done")
+    ready4 = job.get_ready_tasks()
+    check("Stage 3 trả đúng node '3'",
+          len(ready4) == 1 and ready4[0].dag_task_id == "3",
+          got=[t.dag_task_id for t in ready4], exp=["3"])
+
+    # ── 6.11 Hoàn thành job ───────────────────────────────────────────────
+    print("\n  [6.11] Hoàn thành job")
+    job.mark_done("3")
+    check("Sau mark '3': is_done=True (stage 4 = 'end' là dummy)",
+          job.is_done, got=job.current_stage, exp=f">={job._num_stages}")
+
+    # ── 6.12 task_id_start: không trùng giữa các job ─────────────────────
+    print("\n  [6.12] global task_id không trùng giữa 2 job liên tiếp")
+    j1 = DAGJob(1, "profile_data/lightgbm/app_config.json",
+                task_id_start=0)
+    j2 = DAGJob(2, "profile_data/lightgbm/app_config.json",
+                task_id_start=j1.num_tasks)
+    ids_j1 = {t.task_id for t in j1._tasks.values()}
+    ids_j2 = {t.task_id for t in j2._tasks.values()}
+    check("task_id không giao nhau giữa job1 và job2",
+          ids_j1.isdisjoint(ids_j2),
+          got=f"j1={min(ids_j1)}-{max(ids_j1)}  j2={min(ids_j2)}-{max(ids_j2)}")
+
+    # ── 6.13 mark_done với task_id không thuộc job → không crash ─────────
+    print("\n  [6.13] mark_done với id lạ → bỏ qua, không crash")
+    j3 = DAGJob(3, "profile_data/video_app/app_config.json",
+                task_id_start=0)
+    try:
+        j3.mark_done(99999)     # int không tồn tại
+        j3.mark_done("zzz")     # str không tồn tại
+        check("mark_done id lạ không raise exception", True)
+    except Exception as e:
+        check("mark_done id lạ không raise exception", False, got=str(e))
+
+    # ── 6.14 Tất cả 4 app: full dispatch simulation ───────────────────────
+    print("\n  [6.14] Full dispatch simulation — 4 apps")
+    for path in cfg.DAG_APPS:
+        app = path.split("/")[-2]
+        job = DAGJob(0, path, task_id_start=0)
+        dispatched_types: list[str] = []
+        steps = 0
+        while not job.is_done and steps < 20:
+            batch = job.get_ready_tasks()
+            for t in batch:
+                dispatched_types.append(t.task_type)
+                job.mark_done(t.task_id)
+            steps += 1
+        check(f"{app:12s}: job done sau {steps} bước, "
+              f"dispatched={len(dispatched_types)} compute tasks",
+              job.is_done and len(dispatched_types) == job.num_compute_tasks,
+              got=len(dispatched_types), exp=job.num_compute_tasks)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -231,6 +380,7 @@ if __name__ == "__main__":
     test_queue()
     test_scale()
     test_metrics()
+    test_dag_job()
     print("\n" + "=" * 55)
     print("  DONE")
     print("=" * 55)

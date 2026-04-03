@@ -1,40 +1,42 @@
 # =============================================================================
-# env/task.py — Task model
+# env/task.py — Task model (Updated for DAG Support)
 # =============================================================================
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Optional
-
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict
 
 @dataclass
 class Task:
     """
-    1 computation task. Hỗ trợ 3 chế độ:
-      - Full local  : cycles_edge=0,  split_ratio=0.0
-      - Full edge   : cycles_local=0, split_ratio=1.0
-      - Partial     : cả 2 > 0,       0 < split_ratio < 1
-                      local và edge chạy SONG SONG
-                      latency = max(finish_local, finish_edge) - arrival_time
-
-    Bất biến:
-      cycles_local + cycles_edge = cycles
-      latency = transit_time + waiting_time + processing_time  (full local/edge)
-      latency = max(finish_local, finish_edge) - arrival_time  (partial)
+    1 computation task. Hỗ trợ 3 chế độ: Full local, Full edge, Partial.
+    Đã được nâng cấp để hỗ trợ DAG.
     """
 
     task_id:    int
     user_id:    int
-    task_type:  str    # 'Light' | 'Medium' | 'Heavy'
-    cycles:     float
-    input_bits: float
+    task_type:  str    # 'Light' | 'Medium' | 'Heavy' | 'DAG_Task'
+    cycles:     float  # Tương ứng với 'file' size trong JSON (độ phức tạp tính toán)
+    input_bits: float  # Tổng dung lượng input từ các predecessor
     arrival_time: float
 
     inter_arrival_gap: Optional[float] = None
 
+    # ── DAG Routing & Dependency ──────────────────────────────────────────────
+    job_id:     Optional[int] = None    # Thuộc về DAG Job nào
+    dag_name:   Optional[str] = None    # Tên vertex trong JSON (vd: "0", "1")
+    model_size: float = 0.0             # Kích thước model cần tải (từ JSON)
+    
+    # Danh sách các task_id đi trước (cần xong trước khi task này chạy)
+    predecessors: List[int] = field(default_factory=list) 
+    # Danh sách các task_id đi sau
+    successors:   List[int] = field(default_factory=list) 
+    
+    ready_to_start: bool = True # Với task thường là True, task DAG thì False cho đến khi preds xong
+
     # ── Routing ──────────────────────────────────────────────────────────────
     offloaded:   bool  = False
     edge_id:     Optional[int] = None
-    split_ratio: float = 0.0   # 0.0=full local, 1.0=full edge, (0,1)=partial
+    split_ratio: float = 0.0   
 
     # ── Workload split ───────────────────────────────────────────────────────
     cycles_local: float = 0.0
@@ -48,19 +50,19 @@ class Task:
     # ── Timing local part ────────────────────────────────────────────────────
     queue_start:    float = 0.0
     proc_start:     float = 0.0
-    finish_time:    float = 0.0   # finish của local part (hoặc duy nhất nếu full)
+    finish_time:    float = 0.0   
     done_local:     bool  = False
 
-    # ── Timing edge part (chỉ dùng khi partial hoặc full edge) ──────────────
+    # ── Timing edge part ─────────────────────────────────────────────────────
     edge_queue_start: float = 0.0
     edge_proc_start:  float = 0.0
     finish_time_edge: float = 0.0
     done_edge:        bool  = False
 
     # ── Trạng thái hoàn thành ─────────────────────────────────────────────────
-    done: bool = False   # True khi CẢ 2 part xong (hoặc part duy nhất xong)
+    done: bool = False   
 
-    # ── Derived metrics ──────────────────────────────────────────────────────
+    # ── Derived metrics (Giữ nguyên như cũ) ───────────────────────────────────
 
     @property
     def is_partial(self) -> bool:
@@ -79,31 +81,26 @@ class Task:
 
     @property
     def transit_time(self) -> float:
-        """Thời gian từ arrival đến khi vào CPU queue (local part)."""
         if not self.done or self.offloaded and not self.is_partial:
             return float("nan")
         return self.queue_start - self.arrival_time
 
     @property
     def waiting_time(self) -> float:
-        """Chờ trong CPU queue (local part)."""
         if not self.done or self.offloaded and not self.is_partial:
             return float("nan")
         return self.proc_start - self.queue_start
 
     @property
     def processing_time(self) -> float:
-        """CPU xử lý thuần."""
         if not self.done:
             return float("nan")
         if self.offloaded and not self.is_partial:
-            # Full edge: tính từ edge_proc_start đến finish_time_edge
             return self.finish_time_edge - self.edge_proc_start
         return self.finish_time - self.proc_start
 
     @property
     def edge_latency(self) -> float:
-        """Latency của edge part (tx + wait + proc trên edge)."""
         if not self.done or not self.offloaded:
             return float("nan")
         return self.finish_time_edge - self.arrival_time
@@ -124,4 +121,5 @@ class Task:
         else:
             mode = "local"
         status = f"done lat={self.latency*1000:.1f}ms" if self.done else "pending"
-        return f"Task(id={self.task_id} uid={self.user_id} {self.task_type} {mode} {status})"
+        dag_info = f" DAG:{self.dag_name}" if self.job_id is not None else ""
+        return f"Task(id={self.task_id}{dag_info} uid={self.user_id} {self.task_type} {mode} {status})"
