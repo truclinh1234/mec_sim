@@ -1,60 +1,79 @@
 {
-  "total_done": 274,
-  "total_generated": 992,
-  "offload_ratio": 1.0,
+  "total_done": 34542,
+  "total_generated": 34542,
+  "offload_ratio": 0.1052,
   "latency_all_ms": {
-    "mean": 21211.01,
-    "p50": 20736.67,
-    "p95": 41349.83,
-    "p99": 48199.17,
-    "min": 210.0,
-    "max": 53750.0
+    "mean": 49.24,
+    "p50": 20.0,
+    "p95": 50.0,
+    "min": 0.0,
+    "max": 3530.0
   },
   "latency_local_ms": {
-    "mean": null,
-    "p50": null,
-    "p95": null,
-    "p99": null,
-    "min": null,
-    "max": null
+    "mean": 32.99,
+    "p50": 20.0,
+    "p95": 40.0,
+    "min": 0.0,
+    "max": 3530.0
   },
   "latency_edge_ms": {
-    "mean": 21211.01,
-    "p50": 20736.67,
-    "p95": 41349.83,
-    "p99": 48199.17,
-    "min": 210.0,
-    "max": 53750.0
+    "mean": 10.0,
+    "p50": 10.0,
+    "p95": 10.0,
+    "min": 10.0,
+    "max": 10.0
   },
   "latency_partial_ms": {
-    "mean": null,
-    "p50": null,
-    "p95": null,
-    "p99": null,
-    "min": null,
-    "max": null
+    "mean": 352.03,
+    "p50": 190.0,
+    "p95": 1240.0,
+    "min": 20.0,
+    "max": 3520.0
   },
   "by_type": {
-    "Light": {
-      "count": 97,
-      "mean_ms": 20212.2,
-      "p95_ms": 36226.67,
-      "offload_pct": 100.0,
-      "partial_pct": 0.0
+    "lightgbm": {
+      "task_count": 7452,
+      "offload_ratio": 0.1166,
+      "latency_ms": {
+        "mean": 34.76,
+        "p50": 20.0,
+        "p95": 40.0,
+        "min": 0.0,
+        "max": 1870.0
+      }
     },
-    "Medium": {
-      "count": 87,
-      "mean_ms": 20031.95,
-      "p95_ms": 40183.0,
-      "offload_pct": 100.0,
-      "partial_pct": 0.0
+    "matrix": {
+      "task_count": 10593,
+      "offload_ratio": 0.0822,
+      "latency_ms": {
+        "mean": 61.28,
+        "p50": 30.0,
+        "p95": 50.0,
+        "min": 0.0,
+        "max": 3530.0
+      }
     },
-    "Heavy": {
-      "count": 31,
-      "mean_ms": 25359.25,
-      "p95_ms": 41238.33,
-      "offload_pct": 100.0,
-      "partial_pct": 0.0
+    "video": {
+      "task_count": 9210,
+      "offload_ratio": 0.094,
+      "latency_ms": {
+        "mean": 35.79,
+        "p50": 20.0,
+        "p95": 40.0,
+        "min": 0.0,
+        "max": 2840.0
+      }
+    },
+    "mapreduce": {
+      "task_count": 7287,
+      "offload_ratio": 0.1409,
+      "latency_ms": {
+        "mean": 63.56,
+        "p50": 20.0,
+        "p95": 390.0,
+        "min": 0.0,
+        "max": 2690.0
+      }
     }
   },
   "policy": "ThresholdPolicy(thr=2, heavy_off=True, mode=partial_dynamic)"

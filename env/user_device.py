@@ -56,8 +56,7 @@ class UserDevice(QueueNode):
 
     def step(self, dt: float, current_time: float) -> List[Task]:
         """
-        Override để xử lý đúng cycles cho partial task:
-        partial task chỉ dùng cycles_local thay vì cycles đầy đủ.
+        Override để xử lý đúng cycles cho partial task và set cờ done_local.
         """
         finished = []
         cycles_left = self.cpu_freq * dt
@@ -69,15 +68,11 @@ class UserDevice(QueueNode):
                 else:
                     break
 
-            # Lấy cycles cần xử lý: partial dùng cycles_local, full dùng cycles
-            cycles_needed = (self.proc.cycles_local
-                             if self.proc.is_partial
-                             else self.proc.cycles)
-
             if self.rem <= cycles_left:
                 cycles_left -= self.rem
                 self.proc.finish_time = current_time + (self.cpu_freq * dt - cycles_left) / self.cpu_freq
-                self.proc.done_local  = True
+                # [QUAN TRỌNG] Set cờ done_local để môi trường biết local đã xử lý xong phần của nó
+                self.proc.done_local  = True 
                 finished.append(self.proc)
                 self.total_done += 1
                 self.proc = None
@@ -92,8 +87,9 @@ class UserDevice(QueueNode):
         task = self.queue.popleft()
         task.proc_start = current_time
         self.proc = task
-        # Partial task chỉ xử lý cycles_local
-        self.rem = task.cycles_local if task.is_partial else task.cycles
+        # Partial task chỉ xử lý cycles_local. Dùng getattr cho an toàn tuyệt đối với DAG tasks.
+        is_part = getattr(task, 'is_partial', False) or (0 < getattr(task, 'split_ratio', 0) < 1.0)
+        self.rem = task.cycles_local if is_part else task.cycles
 
     def get_obs(self) -> dict:
         return {

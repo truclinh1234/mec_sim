@@ -133,7 +133,14 @@ class QueueNode:
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _start_next(self, current_time: float):
-        task = self.queue.popleft()
-        task.proc_start = current_time
-        self.proc = task
-        self.rem  = task.cycles
+            task = self.queue.popleft()
+            task.proc_start = current_time
+            self.proc = task
+            
+            # [FIX] Trích xuất đúng số Cycles cần xử lý tùy thuộc vào Node là ai
+            if "Edge" in self.label:
+                # Nếu CPU này là Edge, lấy cycles_edge (đã bao gồm Partial ratio và Nhiễu)
+                self.rem = task.cycles_edge
+            else:
+                # Nếu CPU này là Local, lấy cycles_local
+                self.rem = task.cycles_local

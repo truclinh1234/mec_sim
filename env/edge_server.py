@@ -21,7 +21,7 @@ class EdgeServer(QueueNode):
         queue_start    — lúc thực sự vào hàng đợi CPU (sau khi truyền xong)
         proc_start     — lúc CPU bắt đầu xử lý
 
-    Hai loại delay tách bạch:
+    Hai loại delay:
         Transmission delay = tx_start_time + tx_delay  (bay trên kênh)
         Queueing delay     = proc_start - queue_start  (chờ CPU)
     """

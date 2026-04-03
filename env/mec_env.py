@@ -167,39 +167,49 @@ class MecEnv:
         if not tasks:
             return {"total_done": 0}
 
-        def stats(arr):
-            if not arr:
-                return {"mean": None, "p50": None, "p95": None,
-                        "p99": None, "min": None, "max": None}
-            a = np.array(arr) * 1000
+        # --- Logic tính toán tổng thể (giữ nguyên của bạn) ---
+        total_done = len(tasks)
+        offload_count = sum(1 for t in tasks if t.offloaded)
+        
+        def get_stats(lst):
+            lats = [t.latency * 1000 for t in lst if not np.isnan(t.latency)]
+            if not lats: return {}
             return {
-                "mean": round(float(np.mean(a)),              2),
-                "p50":  round(float(np.percentile(a, 50)),    2),
-                "p95":  round(float(np.percentile(a, 95)),    2),
-                "p99":  round(float(np.percentile(a, 99)),    2),
-                "min":  round(float(np.min(a)),               2),
-                "max":  round(float(np.max(a)),               2),
+                "mean": round(float(np.mean(lats)), 2),
+                "p50":  round(float(np.median(lats)), 2),
+                "p95":  round(float(np.percentile(lats, 95)), 2),
+                "min":  round(float(np.min(lats)), 2),
+                "max":  round(float(np.max(lats)), 2),
             }
 
-        lat_all     = [t.latency for t in tasks if not np.isnan(t.latency)]
-        lat_local   = [t.latency for t in tasks
-                       if not t.offloaded and not np.isnan(t.latency)]
-        lat_edge    = [t.latency for t in tasks
-                       if t.offloaded and not t.is_partial and not np.isnan(t.latency)]
-        lat_partial = [t.latency for t in tasks
-                       if t.is_partial and not np.isnan(t.latency)]
-
-        result = {
-            "total_done":       len(tasks),
-            "total_generated":  self.total_tasks_generated,
-            "offload_ratio":    round(self.offload_ratio, 4),
-            "latency_all_ms":   stats(lat_all),
-            "latency_local_ms": stats(lat_local),
-            "latency_edge_ms":  stats(lat_edge),
-            "latency_partial_ms": stats(lat_partial),
-            "by_type":          self._stats_by_type(tasks),
+        res = {
+            "total_done": total_done,
+            "total_generated": getattr(self, 'total_generated', total_done),
+            "offload_ratio": round(offload_count / total_done, 4) if total_done > 0 else 0,
+            "latency_all_ms": get_stats(tasks),
+            "latency_local_ms": get_stats([t for t in tasks if not t.offloaded]),
+            "latency_edge_ms": get_stats([t for t in tasks if t.offloaded and not t.is_partial]),
+            "latency_partial_ms": get_stats([t for t in tasks if t.is_partial]),
         }
-        return result
+
+        # === [CẬP NHẬT MỚI] PHÂN TÍCH CHI TIẾT TỪNG LOẠI APP ===
+        by_type = {}
+        # Lấy danh sách các loại app thực tế có trong dữ liệu
+        app_types = set(getattr(t, 'app_type', 'Independent') for t in tasks)
+
+        for a_type in app_types:
+            # Lọc các task thuộc về loại app này
+            app_tasks = [t for t in tasks if getattr(t, 'app_type', 'Independent') == a_type]
+            
+            # Tính toán thống kê riêng cho App này
+            by_type[a_type] = {
+                "task_count": len(app_tasks),
+                "offload_ratio": round(sum(1 for t in app_tasks if t.offloaded) / len(app_tasks), 4),
+                "latency_ms": get_stats(app_tasks)
+            }
+        
+        res["by_type"] = by_type
+        return res
 
     # ── Internal routing ─────────────────────────────────────────────────────
 

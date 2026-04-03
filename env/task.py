@@ -62,7 +62,7 @@ class Task:
     # ── Trạng thái hoàn thành ─────────────────────────────────────────────────
     done: bool = False   
 
-    # ── Derived metrics (Giữ nguyên như cũ) ───────────────────────────────────
+    # ── Derived metrics───────────────────────────────────
 
     @property
     def is_partial(self) -> bool:

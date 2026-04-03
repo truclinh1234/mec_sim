@@ -14,7 +14,7 @@ USER_CPU_FREQ = 1e9  # 1 GHz
 # ── TASK GENERATION ───────────────────────────────────────────────────────────
 # Tốc độ đến trung bình (jobs/giây) — phân phối Poisson
 # Sau khi tích hợp DAG: mỗi "arrival" là 1 DAGJob (không phải task đơn lẻ)
-ARRIVAL_RATE = 2.0
+ARRIVAL_RATE = 1000.0
 
 # Định nghĩa loại task (giữ để tương thích với các phần còn lại của mec_sim)
 TASK_TYPES = [

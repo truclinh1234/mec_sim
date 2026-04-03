@@ -139,6 +139,14 @@ class MetricsCollector:
     def _task_row(t: Task) -> dict:
         return {
             "task_id":            t.task_id,
+            # === [MỚI THÊM] 3 CỘT ĐỂ KIỂM SOÁT DAG ===
+            "job_id":             getattr(t, 'job_id', -1),
+            "app_name":           getattr(t, 'app_type', 'Independent'),
+            
+            # [SỬA LẠI] Dùng đúng biến dag_name để lấy thứ tự node 
+            "node_name":          getattr(t, 'dag_name', 'None'), 
+            # =========================================
+            # =========================================
             "user_id":            t.user_id,
             "task_type":          t.task_type,
             "offloaded":          int(t.offloaded),

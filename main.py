@@ -37,7 +37,8 @@ def run():
 
     while not env.done:
         # 1. Sinh task độc lập từ logic môi trường cũ (có thể giữ hoặc comment lại nếu chỉ muốn test DAG)
-        tasks = env.generate_tasks()
+        # tasks = env.generate_tasks()
+        tasks = []
         
         # =====================================================================
         # 2. LOGIC SINH DAG JOB ĐỘNG (Dựa trên Arrival Rate)
