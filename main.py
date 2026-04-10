@@ -1,116 +1,133 @@
 # =============================================================================
-# main.py — Chạy simulation: python main.py
+# main.py — Chạy simulation MEC với UCBPolicy  (ĐÃ FIX)
+# Kết quả lưu vào results/  →  sau đó chạy plot.py để xem đồ thị
+# Sử dụng: python main.py
 # =============================================================================
-import os
-import random
+import os, random, math
+import numpy as np
 import config as cfg
 from env.mec_env import MecEnv
 from controller import Controller
-from policy.threshold_policy import ThresholdPolicy
+from policy.ucb_policy import UCBPolicy
 from metrics.collector import MetricsCollector
 from env.trace_parser import DAGParser
 
-def run():
-    env  = MecEnv(seed=cfg.RANDOM_SEED)
-    ctrl = Controller(policy=ThresholdPolicy(threshold=2, use_partial=True))
-    col  = MetricsCollector(run_name="sim")
-    parser = DAGParser() 
 
-    # Cấu trúc lưu trữ các DAG đang chạy
-    active_jobs = {}
-    dag_tasks_to_schedule = []
+# ── Cấu hình chạy ─────────────────────────────────────────────────────────────
+ALPHA       = 1.0     # UCB exploration coefficient
+DEADLINE_MS = 500.0   # ngưỡng latency tính reward (ms)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    # Định nghĩa danh sách các ứng dụng từ file JSON đã tạo ở Bước 1
+
+def main():
+    os.makedirs("results", exist_ok=True)
+
+    policy = UCBPolicy(alpha=ALPHA, deadline_ms=DEADLINE_MS)
+    env    = MecEnv(seed=cfg.RANDOM_SEED)
+    ctrl   = Controller(policy=policy)
+    col    = MetricsCollector(run_name="sim")
+    parser = DAGParser()
+
     base_dir = os.path.dirname(os.path.abspath(__file__))
     available_apps = [
-        ("lightgbm", os.path.join(base_dir, "profile_data", "lightgbm.json")),
+        ("lightgbm",  os.path.join(base_dir, "profile_data", "lightgbm.json")),
         ("mapreduce", os.path.join(base_dir, "profile_data", "mapreduce.json")),
-        ("matrix", os.path.join(base_dir, "profile_data", "matrix_app.json")),
-        ("video", os.path.join(base_dir, "profile_data", "video_app.json"))
+        ("matrix",    os.path.join(base_dir, "profile_data", "matrix_app.json")),
+        ("video",     os.path.join(base_dir, "profile_data", "video_app.json")),
     ]
 
-    prev = 0
-    next_job_id = 1
+    active_jobs           = {}
+    dag_tasks_to_schedule = []
+    prev                  = 0
+    next_job_id           = 1
     env.reset()
 
-    print(f"--- BẮT ĐẦU MÔ PHỎNG (Thời gian: {cfg.SIM_DURATION}s) ---")
+    print(f"--- BẮT ĐẦU  policy={repr(policy)}  duration={cfg.SIM_DURATION}s ---")
 
     while not env.done:
-        # 1. Sinh task độc lập từ logic môi trường cũ (có thể giữ hoặc comment lại nếu chỉ muốn test DAG)
-        # tasks = env.generate_tasks()
         tasks = []
-        
-        # =====================================================================
-        # 2. LOGIC SINH DAG JOB ĐỘNG (Dựa trên Arrival Rate)
-        # =====================================================================
-        # Xác suất có 1 ứng dụng mới đến trong 1 khoảng DT
-        prob_arrival = cfg.ARRIVAL_RATE * cfg.DT
-        if random.random() < prob_arrival:
-            # Chọn ngẫu nhiên 1 ứng dụng và 1 User hợp lệ
+
+        num_arrivals = np.random.poisson(cfg.ARRIVAL_RATE * cfg.DT)
+        for _ in range(num_arrivals):
             app_name, app_path = random.choice(available_apps)
             u_id = random.randint(0, cfg.NUM_USERS - 1)
-            
-            # Khởi tạo Job mới
             new_job = parser.parse_job(
-                file_path=app_path, 
-                job_id=next_job_id, 
-                user_id=u_id, 
-                arrival_time=env.sim_time, 
-                app_type=app_name
+                file_path=app_path, job_id=next_job_id,
+                user_id=u_id, arrival_time=env.sim_time, app_type=app_name,
             )
             active_jobs[new_job.job_id] = new_job
             next_job_id += 1
-            
-            # Lấy các node khởi đầu (VD: node 's') đưa vào hàng đợi
-            dag_tasks_to_schedule.extend([t for t in new_job.tasks.values() if t.ready_to_start])
-        # =====================================================================
+            dag_tasks_to_schedule.extend(
+                t for t in new_job.tasks.values() if t.ready_to_start
+            )
 
-        # 3. Gộp các task DAG đã được mở khóa vào danh sách cần phân bổ
         if dag_tasks_to_schedule:
             tasks.extend(dag_tasks_to_schedule)
-            dag_tasks_to_schedule = []  # Đã giao cho controller thì xóa đi
+            dag_tasks_to_schedule = []
 
-        # 4. Controller ra quyết định offloading
-        ctrl.step(env, tasks)       
-        
-        # 5. Môi trường chạy 1 step thời gian
+        ctrl.step(env, tasks)
         env.step()
 
-        # 6. Lấy các task vừa hoàn thành
         new_done = env.finished_tasks[prev:]
         prev = len(env.finished_tasks)
-        
-        # 7. KÍCH HOẠT DEPENDENCY: Cập nhật DAG và lấy task đi sau
-        for completed_task in new_done:
-            # Kiểm tra xem task này có thuộc DAG nào không
-            if getattr(completed_task, 'job_id', None) is not None: 
-                job = active_jobs.get(completed_task.job_id)
+
+        for task in new_done:
+            # FIX: Lấy arm_key TRƯỚC khi policy.update() gọi .pop()
+            # Thứ tự đúng:
+            #   1. Đọc arm_key từ _pending  (còn trong dict)
+            #   2. Gọi policy.update()       (sẽ .pop() task khỏi _pending)
+            #   3. Đăng ký vào collector
+            arm_key = None
+            if hasattr(policy, '_pending') and task.task_id in policy._pending:
+                # _pending[task_id] = (arm_key, phi)  →  lấy index [0]
+                arm_key = policy._pending[task.task_id][0]
+
+            # Cập nhật UCB model (sẽ pop task khỏi _pending)
+            policy.update(task)
+
+            # Tính reward và lưu vào collector
+            if task.done and not math.isnan(task.latency):
+                reward = max(-1.0, 1.0 - task.latency / policy.deadline)
+                col.register_ucb_reward(task.task_id, reward)
+
+                if arm_key is not None:
+                    display_arm = "Local" if arm_key == "local" else f"Edge {arm_key}"
+                    col.register_ucb_arm(task.task_id, display_arm)
+
+            # Cập nhật DAG: mở khoá task tiếp theo
+            if getattr(task, "job_id", None) is not None:
+                job = active_jobs.get(task.job_id)
                 if job and not job.is_completed:
-                    # Đánh dấu xong, trả về list các task tiếp theo đã đủ điều kiện chạy
-                    next_tasks = job.update_task_completion(completed_task.task_id, env.sim_time)
-                    dag_tasks_to_schedule.extend(next_tasks)
+                    dag_tasks_to_schedule.extend(
+                        job.update_task_completion(task.task_id, env.sim_time)
+                    )
 
         col.on_tasks_done(new_done)
         col.tick(env.sim_time, env.get_obs())
 
-    # --- KẾT THÚC MÔ PHỎNG VÀ IN KẾT QUẢ ---
+    # ── Tổng kết ──────────────────────────────────────────────────────────────
     summary = env.summary()
-    summary["policy"] = repr(ctrl.policy)
+    summary["policy"] = repr(policy)
+
+    completed_dags = [j for j in active_jobs.values() if j.is_completed]
+    summary["dag_completed"]  = len(completed_dags)
+    summary["dag_total"]      = len(active_jobs)
+    summary["dag_latency_ms"] = (
+        sum(j.latency for j in completed_dags) / len(completed_dags) * 1000
+        if completed_dags else 0.0
+    )
+
     col.save_all(summary)
 
-    # Thống kê hiệu suất của các DAG Job
-    completed_dags = [j for j in active_jobs.values() if j.is_completed]
-    avg_dag_latency = sum(j.latency for j in completed_dags) / len(completed_dags) if completed_dags else 0.0
-
-    s = summary
-    print(f"\nDone      : {s['total_done']} / {s.get('total_generated', '?')}")
-    print(f"Offload%  : {s['offload_ratio']*100:.1f}%")
-    print(f"DAG Jobs  : Hoàn thành {len(completed_dags)} / Tổng sinh {len(active_jobs)} ứng dụng.")
-    print(f"DAG Latency: {avg_dag_latency*1000:.1f}ms (Trung bình)")
-    
-    lat = s.get('latency_all_ms', {'mean': 0, 'p95': 0})
-    print(f"Task Latency: mean={lat['mean']}ms  p95={lat['p95']}ms")
+    lat = summary.get("latency_all_ms", {})
+    print(f"\n--- KẾT QUẢ ---")
+    print(f"Tasks done : {summary['total_done']}")
+    print(f"Offload%   : {summary['offload_ratio']*100:.1f}%")
+    print(f"Lat mean   : {lat.get('mean','—')} ms")
+    print(f"Lat p95    : {lat.get('p95','—')} ms")
+    print(f"DAG done   : {len(completed_dags)} / {len(active_jobs)}")
+    print(f"\n→ Chạy 'python plot.py' để xem đồ thị")
 
 
 if __name__ == "__main__":
-    run()
+    main()

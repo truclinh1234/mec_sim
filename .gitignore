@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+
+# Results (tuỳ chọn)
+results/*.png
+
+# OS
+.DS_Store

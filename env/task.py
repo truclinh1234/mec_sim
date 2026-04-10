@@ -24,6 +24,7 @@ class Task:
     # ── DAG Routing & Dependency ──────────────────────────────────────────────
     job_id:     Optional[int] = None    # Thuộc về DAG Job nào
     dag_name:   Optional[str] = None    # Tên vertex trong JSON (vd: "0", "1")
+    app_type: Optional[str] = None # 'lightgbm' | 'mapreduce' | 'matrix' | 'video'
     model_size: float = 0.0             # Kích thước model cần tải (từ JSON)
     
     # Danh sách các task_id đi trước (cần xong trước khi task này chạy)

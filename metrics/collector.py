@@ -38,7 +38,22 @@ class MetricsCollector:
         # Tất cả task records
         self.task_records: List[dict] = []
 
+        # === Bảng băm lưu phần thưởng và cánh tay của UCB ===
+        self.ucb_rewards: dict = {}
+        self.ucb_arms: dict = {}
+
+        # === [FIX] Tích lũy reward để vẽ đồ thị convergence ===
+        self._cumulative_reward: float = 0.0
+
     # ── Feed data ─────────────────────────────────────────────────────────────
+
+    def register_ucb_reward(self, task_id: str, reward: float):
+        """Lưu lại phần thưởng của task để xuất ra file CSV sau này."""
+        self.ucb_rewards[task_id] = reward
+
+    def register_ucb_arm(self, task_id: str, arm_name: str):
+        """Lưu lại quyết định (cánh tay) của thuật toán."""
+        self.ucb_arms[task_id] = arm_name
 
     def on_tasks_done(self, tasks: List[Task]):
         """Gọi sau mỗi env.step() với danh sách task vừa hoàn thành."""
@@ -97,8 +112,8 @@ class MetricsCollector:
 
     def _make_snapshot(self, sim_time: float, env_obs: dict) -> dict:
         tasks = self._buf
-        done_local  = [t for t in tasks if not t.offloaded]
-        done_edge   = [t for t in tasks if t.offloaded]
+        done_local = [t for t in tasks if not t.offloaded]
+        done_edge  = [t for t in tasks if t.offloaded]
 
         def mean_lat(lst):
             lats = [t.latency * 1000 for t in lst if not np.isnan(t.latency)]
@@ -108,22 +123,43 @@ class MetricsCollector:
             lats = [t.latency * 1000 for t in lst if not np.isnan(t.latency)]
             return round(float(np.percentile(lats, 95)), 2) if lats else None
 
+        def mean_reward(lst):
+            rews = [self.ucb_rewards.get(t.task_id) for t in lst
+                    if t.task_id in self.ucb_rewards]
+            rews = [r for r in rews if r is not None]
+            return round(float(np.mean(rews)), 4) if rews else None
+
+        # === [FIX] Tính cumulative reward cho interval này rồi cộng dồn ===
+        interval_rewards = [
+            self.ucb_rewards[t.task_id]
+            for t in tasks
+            if t.task_id in self.ucb_rewards
+        ]
+        if interval_rewards:
+            self._cumulative_reward += float(np.sum(interval_rewards))
+        # ==================================================================
+
         # Queue lengths tổng
         total_user_q = sum(u["queue_len"] for u in env_obs["users"])
         total_edge_q = sum(e["queue_len"] for e in env_obs["edges"])
 
         row = {
-            "sim_time":           round(sim_time, 3),
-            "tasks_done_interval": len(tasks),
-            "tasks_local":        len(done_local),
-            "tasks_offloaded":    len(done_edge),
-            "mean_lat_all_ms":    mean_lat(tasks),
-            "mean_lat_local_ms":  mean_lat(done_local),
-            "mean_lat_edge_ms":   mean_lat(done_edge),
-            "p95_lat_all_ms":     p95_lat(tasks),
-            "total_user_qlen":    total_user_q,
-            "total_edge_qlen":    total_edge_q,
+            "sim_time":              round(sim_time, 3),
+            "tasks_done_interval":   len(tasks),
+            "tasks_local":           len(done_local),
+            "tasks_offloaded":       len(done_edge),
+            "mean_lat_all_ms":       mean_lat(tasks),
+            "mean_lat_local_ms":     mean_lat(done_local),
+            "mean_lat_edge_ms":      mean_lat(done_edge),
+            "p95_lat_all_ms":        p95_lat(tasks),
+            "ucb_reward_mean":       mean_reward(tasks),
+            # === [FIX] Cột mới dùng để vẽ đồ thị Convergence ===
+            "ucb_reward_cumulative": round(self._cumulative_reward, 4),
+            # =====================================================
+            "total_user_qlen":       total_user_q,
+            "total_edge_qlen":       total_edge_q,
         }
+
         # Thêm queue length từng node
         for u in env_obs["users"]:
             row[f"u{u['user_id']}_qlen"] = u["queue_len"]
@@ -135,38 +171,40 @@ class MetricsCollector:
 
         return row
 
-    @staticmethod
-    def _task_row(t: Task) -> dict:
+    def _task_row(self, t: Task) -> dict:
         return {
-            "task_id":            t.task_id,
-            # === [MỚI THÊM] 3 CỘT ĐỂ KIỂM SOÁT DAG ===
-            "job_id":             getattr(t, 'job_id', -1),
-            "app_name":           getattr(t, 'app_type', 'Independent'),
-            
-            # [SỬA LẠI] Dùng đúng biến dag_name để lấy thứ tự node 
-            "node_name":          getattr(t, 'dag_name', 'None'), 
-            # =========================================
-            # =========================================
-            "user_id":            t.user_id,
-            "task_type":          t.task_type,
-            "offloaded":          int(t.offloaded),
-            "edge_id":            t.edge_id if t.offloaded else -1,
-            "arrival_time":       round(t.arrival_time,  4),
-            "finish_time":        round(t.finish_time,   4),
-            # Khoảng cách so với task trước của cùng user (ms)
-            "inter_arrival_ms":   round(t.inter_arrival_gap * 1000, 2) if t.inter_arrival_gap is not None else None,
-            "latency_ms":         round(t.latency * 1000, 2) if not np.isnan(t.latency) else None,
-            "waiting_ms":         round(t.waiting_time * 1000, 2) if not np.isnan(t.waiting_time) else None,
-            "proc_ms":            round(t.processing_time * 1000, 2) if not np.isnan(t.processing_time) else None,
-            "tx_delay_ms":        round(t.tx_delay * 1000, 2),
-            "transit_ms":         round(t.transit_time * 1000, 2) if not np.isnan(t.transit_time) else None,
-            "channel_rate_mbps":  round(t.channel_rate / 1e6, 2) if t.channel_rate else None,
-            # Workload split
-            "cycles_total":       t.cycles,
-            "split_ratio":        round(t.split_ratio, 4),
-            "cycles_local":       t.cycles_local,
-            "cycles_edge":        t.cycles_edge,
-            "local_ratio":        round(t.local_ratio, 4),
-            "edge_ratio":         round(t.edge_ratio,  4),
-            "finish_time_edge":   round(t.finish_time_edge, 4) if t.offloaded else None,
+            "task_id":           t.task_id,
+            "job_id":            getattr(t, 'job_id', -1),
+            "app_name":          getattr(t, 'app_type', 'Independent'),
+            "node_name":         getattr(t, 'dag_name', 'None'),
+            "ucb_reward":        round(self.ucb_rewards.get(t.task_id, 0.0), 4)
+                                 if t.task_id in self.ucb_rewards else None,
+            "ucb_arm":           self.ucb_arms.get(t.task_id, None)
+                                 if t.task_id in self.ucb_arms else None,
+            "user_id":           t.user_id,
+            "task_type":         t.task_type,
+            "offloaded":         int(t.offloaded),
+            "edge_id":           t.edge_id if t.offloaded else -1,
+            "arrival_time":      round(t.arrival_time,  4),
+            "finish_time":       round(t.finish_time,   4),
+            "inter_arrival_ms":  round(t.inter_arrival_gap * 1000, 2)
+                                 if t.inter_arrival_gap is not None else None,
+            "latency_ms":        round(t.latency * 1000, 2)
+                                 if not np.isnan(t.latency) else None,
+            "waiting_ms":        round(t.waiting_time * 1000, 2)
+                                 if not np.isnan(t.waiting_time) else None,
+            "proc_ms":           round(t.processing_time * 1000, 2)
+                                 if not np.isnan(t.processing_time) else None,
+            "tx_delay_ms":       round(t.tx_delay * 1000, 2),
+            "transit_ms":        round(t.transit_time * 1000, 2)
+                                 if not np.isnan(t.transit_time) else None,
+            "channel_rate_mbps": round(t.channel_rate / 1e6, 2)
+                                 if t.channel_rate else None,
+            "cycles_total":      t.cycles,
+            "split_ratio":       round(t.split_ratio, 4),
+            "cycles_local":      t.cycles_local,
+            "cycles_edge":       t.cycles_edge,
+            "local_ratio":       round(t.local_ratio, 4),
+            "edge_ratio":        round(t.edge_ratio,  4),
+            "finish_time_edge":  round(t.finish_time_edge, 4) if t.offloaded else None,
         }

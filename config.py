@@ -5,7 +5,7 @@ NUM_USERS = 6
 # Mỗi dict là 1 edge server: id, cpu_freq (Hz), queue_capacity (0 = unlimited)
 EDGE_SERVERS = [
     {"id": 0, "cpu_freq": 3e9, "queue_capacity": 0, "label": "Edge-1 (3GHz)"},
-    {"id": 1, "cpu_freq": 2e9, "queue_capacity": 0, "label": "Edge-2 (2GHz)"},
+    {"id": 1, "cpu_freq": 3e9, "queue_capacity": 0, "label": "Edge-2 (3GHz)"},
 ]
 
 # CPU tần số của user device (Hz)
@@ -14,7 +14,7 @@ USER_CPU_FREQ = 1e9  # 1 GHz
 # ── TASK GENERATION ───────────────────────────────────────────────────────────
 # Tốc độ đến trung bình (jobs/giây) — phân phối Poisson
 # Sau khi tích hợp DAG: mỗi "arrival" là 1 DAGJob (không phải task đơn lẻ)
-ARRIVAL_RATE = 1000.0
+ARRIVAL_RATE = 2.0
 
 # Định nghĩa loại task (giữ để tương thích với các phần còn lại của mec_sim)
 TASK_TYPES = [

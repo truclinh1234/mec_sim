@@ -1,5 +1,5 @@
 # =============================================================================
-# env/mec_env.py — MEC Environment
+# env/mec_env.py — MEC Environment 
 # =============================================================================
 from __future__ import annotations
 import numpy as np
@@ -38,9 +38,8 @@ class MecEnv:
         self.step_count:     int   = 0
         self.finished_tasks: List[Task] = []
         self._pending:       List[Task] = []
-        self.reset()
         
-        # ── [NEW] NẠP SẴN 4 MA TRẬN NHIỄU (PRELOAD INTERFERENCE MATRICES) ──
+        # ── NẠP SẴN 4 MA TRẬN NHIỄU (PRELOAD INTERFERENCE MATRICES) ──
         self.interference_matrices = {}
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         apps = ['lightgbm', 'mapreduce', 'matrix_app', 'video_app']
@@ -167,7 +166,7 @@ class MecEnv:
         if not tasks:
             return {"total_done": 0}
 
-        # --- Logic tính toán tổng thể (giữ nguyên của bạn) ---
+        # --- Logic tính toán tổng thể ---
         total_done = len(tasks)
         offload_count = sum(1 for t in tasks if t.offloaded)
         
@@ -184,7 +183,7 @@ class MecEnv:
 
         res = {
             "total_done": total_done,
-            "total_generated": getattr(self, 'total_generated', total_done),
+            "total_generated": self.total_tasks_generated,
             "offload_ratio": round(offload_count / total_done, 4) if total_done > 0 else 0,
             "latency_all_ms": get_stats(tasks),
             "latency_local_ms": get_stats([t for t in tasks if not t.offloaded]),
@@ -192,16 +191,12 @@ class MecEnv:
             "latency_partial_ms": get_stats([t for t in tasks if t.is_partial]),
         }
 
-        # === [CẬP NHẬT MỚI] PHÂN TÍCH CHI TIẾT TỪNG LOẠI APP ===
+        # === PHÂN TÍCH CHI TIẾT TỪNG LOẠI APP ===
         by_type = {}
-        # Lấy danh sách các loại app thực tế có trong dữ liệu
         app_types = set(getattr(t, 'app_type', 'Independent') for t in tasks)
 
         for a_type in app_types:
-            # Lọc các task thuộc về loại app này
             app_tasks = [t for t in tasks if getattr(t, 'app_type', 'Independent') == a_type]
-            
-            # Tính toán thống kê riêng cho App này
             by_type[a_type] = {
                 "task_count": len(app_tasks),
                 "offload_ratio": round(sum(1 for t in app_tasks if t.offloaded) / len(app_tasks), 4),
@@ -228,30 +223,25 @@ class MecEnv:
         rate     = self.channel.compute_rate(task.user_id, edge_id, num_concurrent)
         tx_delay = task.input_bits / rate + cfg.PROPAGATION_DELAY
 
-        # ── [NEW] TÍNH TOÁN ĐỘ TRỄ NHIỄU (LINEAR INTERFERENCE MODEL) ──
-        base_time = task.cycles / edge.cpu_freq  # Thời gian gốc khi chạy 1 mình
+        # ── [ĐÃ FIX 1] TÍNH TOÁN ĐỘ TRỄ NHIỄU (LINEAR INTERFERENCE MODEL) ──
+        base_time = task.cycles / edge.cpu_freq  # Thời gian gốc dựa trên độ lớn task
         penalty_time = 0.0                       # Thời gian phạt do chạy nền
         
-        # Lấy tên app từ task (bạn có thể lưu thuộc tính này lúc parse DAG)
         app_name = getattr(task, 'app_type', None) 
         
         if app_name and app_name in self.interference_matrices:
             m_matrix = self.interference_matrices[app_name]['m']
             c_matrix = self.interference_matrices[app_name]['c']
             
-            # Lấy trung bình hệ số m và c của thiết bị edge_id
-            m_factor = abs(m_matrix[edge_id % len(m_matrix)].mean())
-            c_factor = abs(c_matrix[edge_id % len(c_matrix)].mean())
+            m_factor = abs(m_matrix[edge_id % len(m_matrix)].mean())/1000.0
+            c_factor = abs(c_matrix[edge_id % len(c_matrix)].mean())/1000.0
             
-            base_time = c_factor
-            penalty_time = m_factor * num_concurrent  # Phương trình tuyến tính m*x + c
+            # Penalty = Hằng số overhead + (Hệ số đồng thời * Số task)
+            penalty_time = c_factor + (m_factor * num_concurrent) 
         else:
-            # Fallback: Nếu task không có app_name, dùng hệ số phạt mặc định 50ms
             penalty_time = 0.05 * num_concurrent 
             
         predicted_exec_time = base_time + penalty_time
-        
-        # QUAN TRỌNG: Quy đổi ngược thời gian bị nhiễu thành "Cycles Ảo" để đánh lừa CPU Queue
         adjusted_cycles = predicted_exec_time * edge.cpu_freq
         # ──────────────────────────────────────────────────────────────
 
@@ -273,8 +263,27 @@ class MecEnv:
         """
         edge     = self.edges[edge_id]
         rate     = self.channel.compute_rate(task.user_id, edge_id, num_concurrent)
-        # Chỉ truyền phần data tỉ lệ với ratio
         tx_delay = (task.input_bits * ratio) / rate + cfg.PROPAGATION_DELAY
+
+        # ── [ĐÃ FIX 2] ÁP DỤNG MÔ HÌNH NHIỄU CHO PARTIAL OFFLOAD ──
+        base_edge_cycles = task.cycles * ratio
+        base_edge_time = base_edge_cycles / edge.cpu_freq
+        
+        app_name = getattr(task, 'app_type', None) 
+        penalty_time = 0.0
+        
+        if app_name and app_name in self.interference_matrices:
+            m_matrix = self.interference_matrices[app_name]['m']
+            c_matrix = self.interference_matrices[app_name]['c']
+            
+            m_factor = abs(m_matrix[edge_id % len(m_matrix)].mean())/1000.0
+            c_factor = abs(c_matrix[edge_id % len(c_matrix)].mean())/1000.0
+            penalty_time = c_factor + (m_factor * num_concurrent)
+        else:
+            penalty_time = 0.05 * num_concurrent
+            
+        adjusted_edge_cycles = (base_edge_time + penalty_time) * edge.cpu_freq
+        # ──────────────────────────────────────────────────────────────
 
         task.offloaded        = True
         task.split_ratio      = ratio
@@ -282,7 +291,7 @@ class MecEnv:
         task.tx_delay         = tx_delay
         task.channel_rate     = rate
         task.cycles_local     = task.cycles * (1 - ratio)
-        task.cycles_edge      = task.cycles * ratio
+        task.cycles_edge      = adjusted_edge_cycles # Áp dụng cycles ảo
         task.queue_start      = self.sim_time   # local part bắt đầu ngay
         user.offloaded_count += 1
 
@@ -298,7 +307,6 @@ class MecEnv:
         task.done_local = True
         
         if task.is_partial:
-            # Xử lý task bị cắt đôi (Partial)
             if task.done_edge and not task.done:
                 task.done = True
                 self.finished_tasks.append(task)
@@ -306,10 +314,8 @@ class MecEnv:
                     print(f"[DAG {task.app_type}] Task {task.dag_name} làm xong (Partial) lúc {self.sim_time:.3f}s")
                     
         elif not task.offloaded:
-            # [FIX 1] Chỉ đếm nếu đây là task thuần Local
             if not task.done:
-                # [FIX 2] Bỏ qua các Dummy Node (có cycles = 0) không đi qua Router
-                if task.cycles > 0 or hasattr(task, 'queue_start'):
+                if task.cycles > 0:
                     task.done = True
                     self.finished_tasks.append(task)
                     if task.job_id == 1:
@@ -320,7 +326,6 @@ class MecEnv:
         task.done_edge = True
         
         if task.is_partial:
-            # Xử lý task bị cắt đôi (Partial)
             if task.done_local and not task.done:
                 task.done = True
                 self.finished_tasks.append(task)
@@ -328,7 +333,6 @@ class MecEnv:
                     print(f"[DAG {task.app_type}] Task {task.dag_name} làm xong (Partial) lúc {self.sim_time:.3f}s")
                     
         elif task.offloaded:
-            # [FIX 3] Chỉ đếm nếu đây là task thuần Edge (Full Offload)
             if not task.done:
                 task.done = True
                 self.finished_tasks.append(task)
