@@ -72,12 +72,10 @@ class BasePolicy(ABC):
                 # Partial: cả local lẫn edge đều tăng load
                 edge_id = int(dest[0])
                 live_obs["users"][task.user_id]["load"]      += 1
-                # [FIX] Đổi tx_buffer thành queue_len để đồng bộ với EdgeServer
                 live_obs["edges"][edge_id]["queue_len"]      += 1 
                 live_obs["edges"][edge_id]["total_load"]     += 1
             else:
                 edge_id = int(dest)
-                # [FIX] Đổi tx_buffer thành queue_len để đồng bộ với EdgeServer
                 live_obs["edges"][edge_id]["queue_len"]      += 1 
                 live_obs["edges"][edge_id]["total_load"]     += 1
 

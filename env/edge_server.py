@@ -68,7 +68,7 @@ class EdgeServer(QueueNode):
                 still_tx.append(task)
         self.tx_buffer = still_tx
 
-        # ── Bước 2: while loop — vắt kiệt cycles ─────────────────────────────
+        # ── Bước 2: while loop — 
         cycles_left = self.cpu_freq * dt
 
         while cycles_left > 0:

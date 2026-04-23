@@ -1,0 +1,77 @@
+{
+  "total_done": 31367,
+  "total_generated": 31868,
+  "offload_ratio": 0.4248,
+  "latency_all_ms": {
+    "mean": 390.3,
+    "p50": 50.0,
+    "p95": 2530.0,
+    "min": 10.0,
+    "max": 16400.0
+  },
+  "latency_local_ms": {
+    "mean": 271.22,
+    "p50": 60.0,
+    "p95": 1860.0,
+    "min": 20.0,
+    "max": 16400.0
+  },
+  "latency_edge_ms": {
+    "mean": 551.53,
+    "p50": 40.0,
+    "p95": 3600.0,
+    "min": 10.0,
+    "max": 16390.0
+  },
+  "latency_partial_ms": {},
+  "by_type": {
+    "mapreduce": {
+      "task_count": 6741,
+      "offload_ratio": 0.4676,
+      "latency_ms": {
+        "mean": 276.7,
+        "p50": 30.0,
+        "p95": 1970.0,
+        "min": 10.0,
+        "max": 10560.0
+      }
+    },
+    "video": {
+      "task_count": 8164,
+      "offload_ratio": 0.416,
+      "latency_ms": {
+        "mean": 345.79,
+        "p50": 50.0,
+        "p95": 2030.0,
+        "min": 10.0,
+        "max": 14590.0
+      }
+    },
+    "matrix": {
+      "task_count": 9616,
+      "offload_ratio": 0.3714,
+      "latency_ms": {
+        "mean": 550.56,
+        "p50": 60.0,
+        "p95": 3610.0,
+        "min": 10.0,
+        "max": 16400.0
+      }
+    },
+    "lightgbm": {
+      "task_count": 6846,
+      "offload_ratio": 0.4684,
+      "latency_ms": {
+        "mean": 330.15,
+        "p50": 50.0,
+        "p95": 2020.0,
+        "min": 10.0,
+        "max": 12690.0
+      }
+    }
+  },
+  "policy": "EpsGreedyPolicy(eps=0.2, deadline=500ms)",
+  "dag_completed": 5369,
+  "dag_total": 5867,
+  "dag_latency_ms": 1159.2493946730738
+}

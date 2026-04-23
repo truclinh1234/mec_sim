@@ -223,7 +223,7 @@ class MecEnv:
         rate     = self.channel.compute_rate(task.user_id, edge_id, num_concurrent)
         tx_delay = task.input_bits / rate + cfg.PROPAGATION_DELAY
 
-        # ── [ĐÃ FIX 1] TÍNH TOÁN ĐỘ TRỄ NHIỄU (LINEAR INTERFERENCE MODEL) ──
+        #TÍNH TOÁN ĐỘ TRỄ NHIỄU (LINEAR INTERFERENCE MODEL)
         base_time = task.cycles / edge.cpu_freq  # Thời gian gốc dựa trên độ lớn task
         penalty_time = 0.0                       # Thời gian phạt do chạy nền
         
@@ -251,7 +251,7 @@ class MecEnv:
         task.tx_delay         = tx_delay
         task.channel_rate     = rate
         task.cycles_local     = 0.0
-        task.cycles_edge      = adjusted_cycles  # Sử dụng số Cycles ảo đã tính thêm nhiễu
+        task.cycles_edge      = adjusted_cycles  
         user.offloaded_count += 1
         edge.receive_offloaded_task(task, self.sim_time)
 
@@ -265,7 +265,7 @@ class MecEnv:
         rate     = self.channel.compute_rate(task.user_id, edge_id, num_concurrent)
         tx_delay = (task.input_bits * ratio) / rate + cfg.PROPAGATION_DELAY
 
-        # ── [ĐÃ FIX 2] ÁP DỤNG MÔ HÌNH NHIỄU CHO PARTIAL OFFLOAD ──
+        # ÁP DỤNG MÔ HÌNH NHIỄU CHO PARTIAL OFFLOAD ──
         base_edge_cycles = task.cycles * ratio
         base_edge_time = base_edge_cycles / edge.cpu_freq
         

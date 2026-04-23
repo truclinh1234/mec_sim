@@ -44,6 +44,7 @@ class MetricsCollector:
 
         # === [FIX] Tích lũy reward để vẽ đồ thị convergence ===
         self._cumulative_reward: float = 0.0
+        self._cumulative_regret: float = 0.0
 
     # ── Feed data ─────────────────────────────────────────────────────────────
 
@@ -137,6 +138,8 @@ class MetricsCollector:
         ]
         if interval_rewards:
             self._cumulative_reward += float(np.sum(interval_rewards))
+            interval_regrets = [1.0 - r for r in interval_rewards]
+            self._cumulative_regret += float(np.sum(interval_regrets))
         # ==================================================================
 
         # Queue lengths tổng
@@ -155,6 +158,7 @@ class MetricsCollector:
             "ucb_reward_mean":       mean_reward(tasks),
             # === [FIX] Cột mới dùng để vẽ đồ thị Convergence ===
             "ucb_reward_cumulative": round(self._cumulative_reward, 4),
+            "ucb_regret_cumulative": round(self._cumulative_regret, 4),
             # =====================================================
             "total_user_qlen":       total_user_q,
             "total_edge_qlen":       total_edge_q,

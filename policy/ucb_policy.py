@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 from typing import TYPE_CHECKING, Dict, List
-
+import config as cfg
 from policy.base_policy import BasePolicy
 
 if TYPE_CHECKING:
@@ -70,9 +70,9 @@ class UCBPolicy(BasePolicy):
     def __init__(
         self,
         alpha: float = 1.0,
-        deadline_ms: float = 2000.0,    # FIX: tăng từ 500 → 2000ms
+        deadline_ms: float = 2000.0,    
         lam: float = 1.0,
-        min_pulls: int = 20,            # FIX: thêm tham số min_pulls
+        min_pulls: int = 20,            
     ):
         self.alpha = alpha
         self.deadline = deadline_ms / 1000.0
@@ -81,7 +81,6 @@ class UCBPolicy(BasePolicy):
 
         self._arms: Dict[str | int, ArmState] = {}
 
-        # FIX: khai báo _pull_count ở đây, không để thiếu
         self._pull_count: Dict[str | int, int] = {}
 
         # Buffer: task_id → (arm_key, phi)
@@ -94,8 +93,6 @@ class UCBPolicy(BasePolicy):
 
         phi_map = self._build_context(task, user_obs, obs)
 
-        # FIX: giai đoạn warm-up — đảm bảo mỗi arm được thử đủ min_pulls lần
-        # trước khi chuyển sang UCB thuần. Tránh arm bị "bỏ quên" sớm.
         under_explored = [
             arm for arm in self._arms
             if self._pull_count.get(arm, 0) < self.min_pulls
@@ -111,7 +108,6 @@ class UCBPolicy(BasePolicy):
                 key=lambda a: self._arms[a].ucb_score(phi_map[a], self.alpha),
             )
 
-        # FIX: cập nhật pull count
         self._pull_count[best_arm] = self._pull_count.get(best_arm, 0) + 1
 
         # Lưu vào buffer chờ reward
@@ -132,7 +128,6 @@ class UCBPolicy(BasePolicy):
 
         arm_key, phi = self._pending.pop(task.task_id)
 
-        # FIX: deadline 2000ms thực tế hơn — reward không bị clip -1 liên tục
         reward = max(-1.0, 1.0 - task.latency / self.deadline)
 
         if arm_key in self._arms:
@@ -144,7 +139,6 @@ class UCBPolicy(BasePolicy):
         if self._arms:
             return
         self._arms["local"] = ArmState(self.FEATURE_DIM, self.lam)
-        # FIX: khởi tạo pull_count đồng thời với arms
         self._pull_count["local"] = 0
         for e in obs["edges"]:
             eid = e["edge_id"]
@@ -162,21 +156,24 @@ class UCBPolicy(BasePolicy):
         """
         local_load = user_obs.get("load", 0)
         cycles_norm = task.cycles / 1e9
+        
+        max_freq = max((e.get("cpu_freq", 1.0) for e in obs["edges"]), default=1.0)
+        if max_freq == 0:
+            max_freq = 1.0
 
+        local_cpu_norm = cfg.USER_CPU_FREQ / max_freq
         phi_map: Dict[str | int, np.ndarray] = {}
 
         # Arm local — feature edge = 0
         phi_map["local"] = np.array([
             local_load / 10.0,
             0.0,
-            0.0,
+            local_cpu_norm,
             cycles_norm,
             0.0,
         ], dtype=float)
 
-        max_freq = max((e.get("cpu_freq", 1.0) for e in obs["edges"]), default=1.0)
-        if max_freq == 0:
-            max_freq = 1.0
+        
 
         DEFAULT_RATE = 20e6
 

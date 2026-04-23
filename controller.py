@@ -6,9 +6,7 @@
 # ├── Policy    — ra quyết định
 # └── Action    — thực thi vào env
 # =============================================================================
-# =============================================================================
-# controller.py — ĐÃ FIX: truyền user_obs riêng cho UCBPolicy
-# =============================================================================
+
 import config as cfg
 from env.mec_env import MecEnv
 from env.task import Task
@@ -27,13 +25,6 @@ class Action:
 
 
 class Controller:
-    """
-    Điều phối Observer → Policy → Action mỗi time step.
-
-    ✅ FIX: UCBPolicy.decide() cần user_obs riêng cho từng task
-    (để lấy local_load chính xác theo user_id).
-    Trước đây base_policy.act() chỉ truyền obs chung → local_load luôn = 0.
-    """
 
     def __init__(self, policy: BasePolicy):
         self.observer = Observer()
@@ -51,11 +42,6 @@ class Controller:
         obs: dict,
         env: MecEnv,
     ) -> List[Tuple[Task, "str | int"]]:
-        """
-        ✅ FIX: Nếu policy có method decide() (UCBPolicy), gọi riêng cho
-        từng task kèm user_obs đúng user_id.
-        Nếu không (ThresholdPolicy, RandomPolicy), dùng act() như cũ.
-        """
         if not tasks:
             return []
 

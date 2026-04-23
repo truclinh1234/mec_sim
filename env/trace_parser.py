@@ -37,7 +37,6 @@ class DAGParser:
             # model: ["name", size]
             model_size = float(v.get("model", ["NULL", 0])[1])
             
-            # [FIX] Tính toán input_bits dựa trên cycles và model_size thay vì value rỗng trong JSON
             # Nhân với 8000 để quy đổi từ KB sang Bits (Giả sử file size đang ở đơn vị KB)
             input_bits = (cycles + model_size) * 8000 
         
@@ -55,7 +54,7 @@ class DAGParser:
             task.job_id = job_id
             task.dag_name = v_name
             task.model_size = model_size
-            task.app_type = app_type  # <--- ĐÃ THÊM DÒNG NÀY ĐỂ MAPPING VỚI EXCEL
+            task.app_type = app_type  
             
             name_to_id[v_name] = self.current_task_id
             job.add_task(task)
